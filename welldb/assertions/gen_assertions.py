@@ -21,6 +21,8 @@ import re
 import sys
 from collections import OrderedDict
 
+import pyarrow.parquet as parquet
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 WELLDB = os.path.dirname(HERE)
 
@@ -107,8 +109,7 @@ def first(value, separator):
 
 
 def depth(value):
-    """A depth, compared within half a millimetre: the flow reader takes an unquoted decimal in single precision, which
-    moves the fourth decimal of a depth of some thousand metres."""
+    """A depth, compared within half a millimetre."""
     return "{ equals: " + value + ", tolerance: 0.0005 }" if "." in value else value
 
 
@@ -146,6 +147,31 @@ def log_checks(log):
         ("data.LogActivity", text(first(log["log_pass"], ","))),
         ("data.IsRegular", "true" if log["depth_coding"] == "REGULAR" else "false"),
     ])
+
+
+def curve_file_of(log):
+    """The columns of a log's curve file, in order, each with its values: the samples OSDU has to hold."""
+    folder = os.path.join(WELLDB, "data", "curves", log["source_project"], log["log_id"].replace("/", "_"))
+    table = parquet.read_table(os.path.join(folder, "chunk_00000.parquet"))
+    return OrderedDict((name, table.column(name).to_pylist()) for name in table.column_names)
+
+
+def sample_assertions(log):
+    """The log's bulk data, held to its curve file: its rows, its columns, an index that only increases, and each curve's
+    count and sum, so one sample changed anywhere fails the test, whichever curve it is in and however little it moved."""
+    curves = curve_file_of(log)
+    rows = len(next(iter(curves.values())))
+    lines = [
+        f"      - rowCount: {rows}",
+        "      - columns: { equals: [" + ", ".join(curves) + "] }",
+        "      - column: MD",
+        "        monotonic: strictlyIncreasing",
+    ]
+    for name, values in curves.items():
+        held = [v for v in values if v is not None and v == v]
+        lines.append(f"      - {{ aggregate: count, column: {name}, equals: {len(held)} }}")
+        lines.append(f"      - {{ aggregate: sum, column: {name}, equals: {round(sum(held), 4)}, tolerance: 0.001 }}")
+    return lines
 
 
 def curve_checks(curve):
@@ -213,6 +239,10 @@ for wellbore, logs in wellbores.items():
         "# with the value that record holds; every proof value of a curve is read from that one curve. Units, log types,",
         "# sampling domains, business values and curve families are the references WellLog@1.4.0 writes for the source's words",
         "# (the unit US/F is {partition}:reference-data--UnitOfMeasure:us%2Fft:). A depth is compared within half a millimetre.",
+        "#",
+        "# Each log also has a test of its samples: its bulk data, read back from the Wellbore DDMS, is held to its parquet curve",
+        "# file by its rows, its columns, an index that only increases, and each curve's count and sum, so a sample changed",
+        "# anywhere fails the test, however little it moved.",
         "#",
         "# A row whose log or curve OSDU does not hold fails the test, saying by which path it was not found. A test, an assertion,",
         "# a row or a proof value takes disabled: <why> to stay in the flow, reported as skipped, without failing the run. A test",
@@ -282,6 +312,14 @@ for wellbore, logs in wellbores.items():
                 "              check:",
             ]
             lines += [f"                {p}: {v}" for p, v in curve_checks(curve).items()]
+        lines += [
+            f"  - name: {slug(log_name)}-samples",
+            f"    description: {text('Every curve sample of log ' + log['log_id'] + ', from its curve file.')}",
+            f"    tags: [welldb, {slug(log_name)}, bulk]",
+            f"    kind: {KIND}",
+            f"    query: 'tags.WellLogNativeUID:\"{log['log_id']}\"'",
+            "    bulk: { maxRows: 100000 }",
+        ] + dated() + ["    assert:"] + sample_assertions(log)
     path = os.path.join(HERE, "wellbores", slug(wellbore) + ".yaml")
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")

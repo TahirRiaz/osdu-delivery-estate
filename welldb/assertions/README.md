@@ -66,8 +66,12 @@ The engine side of this is the `knownValues` assertion of OSDU Delivery's assert
 | `log_run`, `welldb_log_source`, `creator`, `log_service`, `log_pass` | `data.LogRun`, `data.LogSource`, `data.Source`, `data.ActivityType`, `data.LogActivity` | as it is |
 | `depth_coding` | `data.IsRegular` | `REGULAR` is `true` |
 
-A depth is compared within half a millimetre (`tolerance: 0.0005`), since an unquoted decimal in a flow is read in single
-precision, which moves the fourth decimal of a depth of some thousand metres.
+A depth is compared within half a millimetre (`tolerance: 0.0005`).
+
+Each log also has a `-samples` test of its curve values, which reads its bulk data back from the Wellbore DDMS and holds it
+to its parquet curve file: the row count, the exact columns, a depth that only increases, and each curve's count and sum.
+One sample changed anywhere fails it, however little it moved. A row of `curves-meta` is what a curve says about itself;
+this is what the curve holds.
 
 Not checked: the source's own unit spelling, which WellLog@1.4.0 keeps at
 `data.ExtensionProperties.WellDb.Curves[].OriginalUnit`, and the curve values themselves, which
