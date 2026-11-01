@@ -12,6 +12,10 @@
 # sampling domains, business values and curve families are the references WellLog@1.4.0 writes for the source's words
 # (the unit US/F is {partition}:reference-data--UnitOfMeasure:us%2Fft:). A depth is compared within half a millimetre.
 #
+# Each log also has a test of its samples: its bulk data, read back from the Wellbore DDMS, is held to its parquet curve
+# file by its rows, its columns, an index that only increases, and each curve's count and sum, so a sample changed
+# anywhere fails the test, however little it moved.
+#
 # A row whose log or curve OSDU does not hold fails the test, saying by which path it was not found. A test, an assertion,
 # a row or a proof value takes disabled: <why> to stay in the flow, reported as skipped, without failing the run. A test
 # that says when its proof values were stated (asOf) and how long they hold (validFor: 180d) is flagged past that, a
@@ -221,3 +225,34 @@ tests:
                 data.Curves.LogCurveTypeID: "{partition}:reference-data--LogCurveType:WellDB:RHOB:"
                 data.Curves.LogCurveMainFamilyID: "{partition}:reference-data--LogCurveMainFamily:Density:"
                 data.Curves.LogCurveFamilyID: "{partition}:reference-data--LogCurveFamily:Bulk%20Density:"
+  - name: composite-samples
+    description: "Every curve sample of log LOG-0001/1, from its curve file."
+    tags: [welldb, composite, bulk]
+    kind: osdu:wks:work-product-component--WellLog:1.4.0
+    query: 'tags.WellLogNativeUID:"LOG-0001/1"'
+    bulk: { maxRows: 100000 }
+    assert:
+      - rowCount: 369
+      - columns: { equals: [MD, BS, CALI, DRHO, DT, DTS, GR, NPHI, RD, RHOB] }
+      - column: MD
+        monotonic: strictlyIncreasing
+      - { aggregate: count, column: MD, equals: 369 }
+      - { aggregate: sum, column: MD, equals: 795396.3264, tolerance: 0.001 }
+      - { aggregate: count, column: BS, equals: 369 }
+      - { aggregate: sum, column: BS, equals: 3136.5, tolerance: 0.001 }
+      - { aggregate: count, column: CALI, equals: 358 }
+      - { aggregate: sum, column: CALI, equals: 3337.2611, tolerance: 0.001 }
+      - { aggregate: count, column: DRHO, equals: 365 }
+      - { aggregate: sum, column: DRHO, equals: 11.6875, tolerance: 0.001 }
+      - { aggregate: count, column: DT, equals: 352 }
+      - { aggregate: sum, column: DT, equals: 34118.9971, tolerance: 0.001 }
+      - { aggregate: count, column: DTS, equals: 363 }
+      - { aggregate: sum, column: DTS, equals: 62215.5125, tolerance: 0.001 }
+      - { aggregate: count, column: GR, equals: 359 }
+      - { aggregate: sum, column: GR, equals: 29401.0621, tolerance: 0.001 }
+      - { aggregate: count, column: NPHI, equals: 363 }
+      - { aggregate: sum, column: NPHI, equals: 87.9637, tolerance: 0.001 }
+      - { aggregate: count, column: RD, equals: 361 }
+      - { aggregate: sum, column: RD, equals: 3738.5432, tolerance: 0.001 }
+      - { aggregate: count, column: RHOB, equals: 357 }
+      - { aggregate: sum, column: RHOB, equals: 836.9555, tolerance: 0.001 }
