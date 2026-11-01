@@ -1,0 +1,49 @@
+# Ingestion: the well log curve view into a table for analytical queries.
+#
+# welldb-welllog-07-metadata-dimensions writes osdu.v_dim_WelldbWellLogCurve in the module's database: a row per curve of
+# each delivered log, beside its log's header, its units, families and type, the numbers typed. This flow copies it into
+# OsduData.silver.dim_WellLogCurveMetadata under a clustered columnstore index, the table analytical queries read. It is
+# not OsduData.silver.WellLogCurve, the curve table welldb-welllog-02-curves-ing loads and the header deliveries read their
+# curves from: written by this flow, its rows would be rewritten and deleted, and the deliveries would wait on this flow,
+# which waits on the logs they deliver.
+#
+# Order. The dimension flow's target.connection and this flow's source name the module's database by the same reference,
+# ${env:SQLFLOW_CATALOG_DB}, so lineage runs this flow after the dimensions are built and the view checked; both join the
+# welldb-dimensions schedule. A build whose view fails its check fails, so this flow does not copy it.
+#
+# Grain. The view's key is (partition, id): the number of the curve's row in osdu.dim_WelldbLogCurve, the same for as long
+# as the dimension holds the curve. Every run reads the whole view and upserts on the key; a curve the view no longer holds
+# is deleted (matchKeys), unless more than the threshold's share would go at once, which stops the delete and says so.
+#
+# The columnstore index is made when the run first creates the table, which then has no identity primary key (an identity
+# key would take the clustered index).
+flowType: ing
+name: welldb-welllog-08-curve-table-ing
+batch: welldb
+
+connections:
+  osduDelivery: ${env:SQLFLOW_CATALOG_DB}
+  osduData: ${env:OSDU_DATA_DB}
+
+source:
+  server: osduDelivery
+  object: OsduDelivery.osdu.v_dim_WelldbWellLogCurve
+
+target:
+  server: osduData
+  object: OsduData.silver.dim_WellLogCurveMetadata
+  columnStoreIndex: true
+
+load:
+  keyColumns: [partition, id]
+  matchKeysInSourceAndTarget: true
+
+matchKeys:
+  action: delete
+
+systemColumns:
+  insertedDate: true
+  updatedDate: true
+
+# Runs with the dimensions it reads, after them (../schedules.yaml).
+schedule: welldb-dimensions

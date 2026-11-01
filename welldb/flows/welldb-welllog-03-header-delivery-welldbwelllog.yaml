@@ -1,0 +1,99 @@
+# Flow: welldb-welllog-03-header-delivery-welldbwelllog
+#
+# Delivers the well database's well logs as WellDbWellLog 1.0.0 records, a custom copy of WellLog 1.4.0 that carries what
+# WellLog has no property for (the unit each curve came with), from the same ingestion tables
+# welldb-welllog-03-header-delivery reads, rendered with ../mappings/WellDbWellLog@1.0.0.yaml. The wellbore DDMS serves only
+# the kinds it knows, so these records go through storage (PUT /api/storage/v2/records) and carry no curve values of their
+# own: each takes the DDMS's references to its log's curve values from its parent, the WellLog 1.4.0 record
+# welldb-welllog-03-header-delivery delivers from the same row, read from OSDU as the record renders, and names that parent
+# in data.ParentWellLogID. Both records of a log then point at the same curve files, and their ids differ only in their
+# entity type (work-product-component--WellLog and work-product-component--WellDbWellLog).
+#
+# Its template (../templates/welldb_wks_work-product-component--WellDbWellLog_1.0.0.json) names WellLog 1.4.0 as its
+# parent, so lineage runs this flow after welldb-welllog-03-header-delivery. A log whose WellLog record is not in OSDU yet
+# is held, naming it; when the WellLog flow delivers it, the ledger releases the held record and this flow's next run
+# sends it. A WellLog record delivered again asks this flow to render its WellDbWellLog record again, and it is sent only
+# if it changed.
+#
+# The kind is this estate's own, and registering welldb:wks:work-product-component--WellDbWellLog:1.0.0 with OSDU's schema
+# service is done outside OSDU Delivery. Storage takes records of a kind the schema service does not hold, but the
+# indexer flags each of them "schema not found", so search finds them only once the kind is registered. Until then the
+# schedule welldb-welllog-custom-kind (../schedules.yaml) stays disabled, and the flow runs only when someone asks for
+# it, from the Pipelines page or with
+# `sqlflow run welldb-welllog-03-header-delivery-welldbwelllog.yaml --set logSource=COMPOSITE`.
+flowType: delivery
+name: welldb-welllog-03-header-delivery-welldbwelllog
+batch: welldb
+
+# The partition each record's parent is read from: the one welldb-welllog-03-header-delivery delivers to. Each partition
+# keeps a ledger of its own.
+partitions:
+  - name: dev
+
+parameters:
+  logSource:
+    required: true
+    description: The well database's log source (COMPOSITE, CPI, CORE, ILT, PLT, PRESSURE).
+
+source:
+  # Resolved on the node that runs the flow; never a connection string in the document.
+  connection: ${env:OSDU_DATA_DB}
+  record:
+    object: OsduData.silver.WellLog
+    key: [source_project, log_id]
+    # The table's identity primary key: the read pages by it and a fan-out cuts its ranges on it.
+    primaryKey: RecId
+    # One flow instance per log source: the predicate the run's parameter fills.
+    scope:
+      log_source: logSource
+  datasets:
+    curves:
+      object: OsduData.silver.WellLogCurve
+      join:
+        source_project: source_project
+        log_id: log_id
+      orderBy: [curve_ordinal]
+  # No payload: the curve values are the WellLog record's, in the wellbore DDMS, and this record points at them.
+  # When the well database last changed the log. A row modified after the version the ledger holds goes through render
+  # and the hash check again; the same moment is skipped without rendering; an older one is never sent.
+  lastModified: update_date
+  incremental:
+    overlapSeconds: 900
+  # Where the intake writes the rendered documents a drain reads back: apart from the WellLog flows'.
+  work: ../.work/welldbwelllog/{logSource}
+
+render:
+  mapping: WellDbWellLog@1.0.0
+
+change:
+  detect: renderedHash
+  onUnchanged: skip
+
+target:
+  endpoint: ${env:OSDU_URL}
+  auth:
+    type: oauth2ClientCredentials
+    secondarySecretRef: ${env:OSDU_CLIENT_ID}
+    secretRef: ${env:OSDU_CLIENT_SECRET}
+    token:
+      url: ${env:OSDU_TOKEN_URL}
+      body:
+        scope: ${env:OSDU_SCOPE}
+  # Storage: the record alone. Its parents are read through the same endpoint and credentials, by id
+  # (POST /api/storage/v2/query/records), so the flow's identity must be able to read the WellLog records.
+  protocol: storage
+
+reliability:
+  retry: { attempts: 4, backoff: exponential, baseDelayMs: 500, maxDelayMs: 30000 }
+  timeoutSeconds: 100
+  leaseSeconds: 300
+
+parallelism:
+  recordsAtOnce: 8
+
+# Daily once enabled, with logSource COMPOSITE (../schedules.yaml), after welldb-welllog has delivered the WellLog records
+# it reads its parents from. A verify (drift) run is a run with --operation verify.
+schedule: welldb-welllog-custom-kind
+
+verify:
+  reconcile: false

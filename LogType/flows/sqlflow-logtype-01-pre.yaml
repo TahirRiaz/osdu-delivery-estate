@@ -1,0 +1,47 @@
+# Pre-ingestion: this estate's curated LogType base dataset into the pre layer.
+#
+# The first flow of the chain the delivery flow reads. It lands whatever CSV files are under ../data/logtype into
+# [pre].[CuratedLogType] as raw text, then refreshes the typed view [pre].[v_CuratedLogType] that the ingestion flow beside it reads.
+# The file holds one row per reference-data--LogType value this pipeline maintains: a curated, versioned source
+# maintained here and reviewed like any other change.
+name: sqlflow-logtype-01-pre
+batch: sqlflow-logtype
+
+source:
+  type: csv
+  location: ../data/logtype
+  options:
+    delimiter: ","
+    header: true
+    srcFile: "*.csv"
+
+target:
+  connection: ${env:OSDU_DATA_DB}
+  schema: pre
+  table: CuratedLogType
+
+schema:
+  evolve: widen
+
+transform:
+  inferTypes: true
+  onConvertError: fail
+  columns:
+    - { name: id, type: varchar(200) }
+    - { name: code, type: varchar(200) }
+    - { name: name, type: varchar(200) }
+    - { name: description, type: varchar(2000) }
+    - { name: authority, type: varchar(200) }
+    - { name: publication, type: varchar(200) }
+    - { name: revision, type: varchar(50) }
+    - { name: commit_date, type: datetime2 }
+    - { name: source_note, type: varchar(1000) }
+
+incremental:
+  dateColumn: FileDate_DW
+  overlapDays: 0
+
+load:
+  mode: append
+
+schedule: sqlflow-logtype

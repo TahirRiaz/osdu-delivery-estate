@@ -1,0 +1,282 @@
+# Mapping: well database logs into the WellDbWellLog 1.0.0 template, a custom copy of WellLog 1.4.0 linked to it
+# (osdu/docs/reference/flow/mapping-parent.md in OSDU Delivery).
+#
+# The same record as ./WellLog@1.4.0.yaml renders, from the same columns, with the same translations and searches, under
+# the kind welldb:wks:work-product-component--WellDbWellLog:1.0.0, plus what WellLog has no property for: the unit each
+# curve came with, as the well database spells it, written on the curve itself (Curves[].OriginalUnit and
+# Curves[].OriginalDepthUnit) rather than in a list of its own under ExtensionProperties.
+#
+# WellDbWellLog cannot go through the wellbore DDMS, which serves only the kinds it knows, so its records are written
+# through storage and carry no curve values of their own. Its template names WellLog 1.4.0 as its parent
+# (x-osdu-inheriting-from-kind), so each record has one: the WellLog record welldb-welllog-03-header-delivery delivers
+# from the same row. The two ids differ only in their entity type, because this mapping keys the rows exactly as the
+# WellLog 1.4.0 mapping does (dataset.system welldb, dataset.key [source_project, log_id], the default idFrom): a log's
+# WellLog record is dev:work-product-component--WellLog:<id> and its WellDbWellLog record
+# dev:work-product-component--WellDbWellLog:<id>, the same <id>. Keep the dataset block as it is, or the parents are no
+# longer the WellLog records.
+#
+# As each record renders, its parent is read from OSDU's storage service, and the record takes from it where the DDMS
+# put the log's curve values (data.DDMSDatasets, data.ExtensionProperties.wdms), so a reader of the WellDbWellLog record
+# finds the same curve files as a reader of the WellLog record, and the parent's id (data.ParentWellLogID), so a reader
+# finds the WellLog record itself. The WellLog record links back to this one (ExtensionProperties.WellDb.WellDbWellLogID
+# in ./WellLog@1.4.0.yaml) once this one is in OSDU, so the two records are linked both ways. A log whose WellLog record
+# is not in OSDU yet is held, naming its parent; when welldb-welllog-03-header-delivery delivers it, the ledger releases
+# the held record and the next run of this flow sends it. A WellLog record delivered again asks this flow to render its
+# WellDbWellLog record again, and it is sent only if what it takes from the parent changed.
+#
+# Everything else below is ./WellLog@1.4.0.yaml's, and its comments say why each property is filled as it is.
+documentType: mapping
+name: WellDbWellLog
+version: 1.0.0
+# The kind alone: the one version ../templates holds is filled, and an edit of the template file is followed from the
+# next sync.
+template:
+  kind: welldb:wks:work-product-component--WellDbWellLog:1.0.0
+description: Well logs of the well database (one record per log) with curve metadata and the well database's own unit spellings; the curve files are the WellLog parent's.
+
+dataset:
+  # The WellLog 1.4.0 mapping's system and key, so each log's record and its parent share the minted part of their ids.
+  system: welldb
+  # The delivery key is UUIDv5 over (source system, project, log id): the grain the well database models.
+  key: [source_project, log_id]
+  # Display and search only, never in the record: find a wellbore's logs by name in the GUI and the ledger.
+  label: "{wellbore_uwi} / {log_source} / {log_id}"
+  # What an operator holds when they come looking for this record: the ledger indexes each value, so the record is
+  # found by a wellbore name or a log id from the Records page without knowing which flow delivered it.
+  identity: [wellbore_uwi, log_id]
+
+parameters:
+  dataPartition:
+    required: true
+    description: The OSDU data partition record ids and references are minted in.
+  aclOwner:
+    required: true
+    description: The entitlements group that owns every record this mapping renders (acl.owners).
+  aclViewer:
+    required: true
+    description: The entitlements group that may read every record this mapping renders (acl.viewers).
+  legalTag:
+    required: true
+    description: The legal tag every record this mapping renders carries (legal.legaltags).
+
+# The wellbore a log belongs to is looked up on the platform as each record needs one, never captured into the cache: a
+# partition holds hundreds of thousands of them. The well database names a log's wellbore by the wellbore's
+# FacilityName (wellbore_uwi); a name no wellbore carries is looked for among the wellbores' aliases.
+searches:
+  Wellbore:
+    kind: "osdu:wks:master-data--Wellbore:*"
+    schema:
+      kind: osdu:wks:master-data--Wellbore:1.3.0
+      version: 58d6bdbd9d066a06
+    description: The partition's wellbores, found by name or by one of their aliases.
+
+record:
+  # Access and legal: every record carries them. The well database's wellbores are all in one country.
+  acl:
+    owners: ["{$param.aclOwner}"]
+    viewers: ["{$param.aclViewer}"]
+  legal:
+    legaltags: ["{$param.legalTag}"]
+    otherRelevantDataCountries: [US]
+  tags:
+    DeliveredBy: osdu-delivery
+    LogStatus:
+      $from: log_pass_type
+      $modifiers:
+        - split: { separator: ",", part: 1 }
+    WellLogNativeUID:
+      $from: native_uid
+      $modifiers:
+        - split: { separator: ",", part: 1 }
+    SourceProject: { $from: source_project }
+
+  # The log.
+  data:
+    Name:
+      $from: log_source
+      $modifiers: [trim]
+    WellboreID:
+      $search: Wellbore
+      $findBy:
+        - data.FacilityName = wellbore_uwi
+        # Asked only for a name no wellbore carries: a wellbore renamed since the well database recorded the log.
+        - data.NameAliases.AliasName = wellbore_uwi
+    # The link back to the parent: the WellLog record's id as OSDU holds it, read with the sections below. ref adds the
+    # version separator and no version, so the reference names whichever version of the parent is latest.
+    ParentWellLogID:
+      $parent: id
+      $modifiers: [ref]
+    LogRun: { $from: log_run }
+    LogSource: { $from: welldb_log_source }
+    LogVersion: { $from: log_version }
+    LogActivity:
+      $from: log_pass
+      $modifiers:
+        - split: { separator: ",", part: 1 }
+    ActivityType: { $from: log_service }
+    Source: { $from: creator }
+    SamplingStart: { $from: index_min }
+    SamplingStop: { $from: index_max }
+    SamplingInterval: { $from: index_increment }
+    SamplingDomainTypeID:
+      $from: index_type
+      $modifiers:
+        - replace: { DEPTH: Depth }
+        - ref
+    WellLogTypeID:
+      $from: data_type
+      $modifiers:
+        - replace: { INTERPRETED: Interpreted }
+        - ref
+    ReferenceCurveID: MD
+    IsRegular:
+      $from: depth_coding
+      $modifiers:
+        - equals: REGULAR
+    # Every log is delivered unevaluated: no one has assessed it yet.
+    TechnicalAssurances:
+      - TechnicalAssuranceTypeID: "{$param.dataPartition}:reference-data--TechnicalAssuranceType:Unevaluated:"
+
+    # The point the depths are measured from: the well database carries the elevation as a value and a unit ("42.8 M").
+    VerticalMeasurement:
+      VerticalMeasurement:
+        $from: elev_meas_ref
+        $modifiers:
+          - split: { separator: " ", part: 1 }
+        # A business rule beside the schema's checks (osdu/docs/reference/flow/mapping-assertions.md): the schema takes any
+        # number here, but a kelly bushing stands between 0 and 250 m above the datum (this estate's logs give 27.7 to 42.8 M).
+        # Judged on the number the record carries, after the split; a log whose elevation lies outside is held before it is
+        # sent, its document kept, until the source is corrected or a release sends it as it is.
+        $assert:
+          - between: [0, 250]
+            name: reference-elevation-range
+            description: The depth reference elevation lies between 0 and 250 m.
+      VerticalMeasurementUnitOfMeasureID:
+        $coalesce:
+          - $from: elev_meas_ref
+            $modifiers:
+              - split: { separator: " ", part: 2 }
+              - replace: $cache.DepthUnitAlias
+              - ref
+          - $cache: UnitOfMeasure.id
+            $findBy:
+              - ID = elev_meas_ref
+              - Code = elev_meas_ref
+              - Name = elev_meas_ref
+            $modifiers:
+              - split: { separator: " ", part: 2 }
+          - $from: elev_meas_ref
+            $unverified: true
+            $modifiers:
+              - split: { separator: " ", part: 2 }
+              - replace: $cache.DepthUnitAlias
+              - ref
+      VerticalMeasurementTypeID:
+        $from: logs_meas_from
+        $modifiers:
+          # The partition holds both a KB and a KellyBushing record; the well database's logs are filed under
+          # KellyBushing, as every log delivered before them is.
+          - replace: { KB: KellyBushing }
+          - ref
+
+    # The curves: one item per row of the curves child dataset. Under $item a bare column name reads the curve's row.
+    Curves:
+      $forEach: curves
+      $item:
+        CurveID: { $from: curve_id }
+        Mnemonic: { $from: curve_id }
+        # The well database's spelling becomes the partition's unit code (GAPI becomes gAPI, OHMM ohm.m); a spelling the
+        # table does not list is looked for as it is, then among the partition's units, and last written as translated,
+        # unverified.
+        CurveUnit:
+          $coalesce:
+            - $from: curve_unit
+              $modifiers:
+                - replace: $cache.UnitAlias
+                - ref
+            - $cache: UnitOfMeasure.id
+              $findBy:
+                - ID = curve_unit
+                - Code = curve_unit
+                - Name = curve_unit
+            - $from: curve_unit
+              $unverified: true
+              $modifiers:
+                - replace: $cache.UnitAlias
+                - ref
+        # The spelling the unit came with, untranslated, beside the partition's reference above: what the WellLog 1.4.0
+        # mapping can only keep in a list of its own under ExtensionProperties.
+        OriginalUnit:
+          $from: curve_unit
+          $required: false
+        DepthUnit:
+          $coalesce:
+            - $from: index_unit
+              $modifiers:
+                - replace: $cache.DepthUnitAlias
+                - ref
+            - $cache: UnitOfMeasure.id
+              $findBy:
+                - ID = index_unit
+                - Code = index_unit
+                - Name = index_unit
+            - $from: index_unit
+              $unverified: true
+              $modifiers:
+                - replace: $cache.DepthUnitAlias
+                - ref
+        OriginalDepthUnit:
+          $from: index_unit
+          $required: false
+        TopDepth: { $from: index_min }
+        BaseDepth: { $from: index_max }
+        CurveDescription: { $from: curve_description }
+        # The index curve has no version and no update time of its own.
+        CurveVersion:
+          $from: curve_version
+          $required: false
+        DateStamp:
+          $from: update_date
+          $modifiers: [date]
+          $required: false
+        LogCurveBusinessValueID:
+          $from: business_value
+          $modifiers:
+            - replace: { HIGH: High }
+            - ref
+          # The well database leaves some curves without a business value, and that is not a reason to hold the log.
+          $required: false
+        # What the curve is, from the curve dictionary by its mnemonic: the dictionary gives the code each record's id ends
+        # with (GR is the LogCurveType WellDB:GR, the main family GammaRay and the family Gamma%20Ray). A mnemonic the
+        # dictionary does not list gives none of the three, and the curve goes out without them rather than holding its log.
+        # welldb-ref-03-delivery delivers every record the dictionary names; a code the reference cache has not captured
+        # yet goes out as an unverified reference, found by the next refresh.
+        LogCurveTypeID:
+          $from: curve_id
+          $unverified: true
+          $modifiers:
+            - id: "{$param.dataPartition}:reference-data--LogCurveType:{$cache.CurveDictionary.log_curve_type_id}:"
+          $required: false
+        LogCurveMainFamilyID:
+          $from: curve_id
+          $unverified: true
+          $modifiers:
+            - id: "{$param.dataPartition}:reference-data--LogCurveMainFamily:{$cache.CurveDictionary.log_curve_main_family_id}:"
+          $required: false
+        LogCurveFamilyID:
+          $from: curve_id
+          $unverified: true
+          $modifiers:
+            - id: "{$param.dataPartition}:reference-data--LogCurveFamily:{$cache.CurveDictionary.log_curve_family_id}:"
+          $required: false
+
+    # Where the wellbore DDMS put the log's curve values, taken from the parent: the WellLog record of the same id, read
+    # from OSDU as the record renders. The DDMS writes both into the WellLog record when it stores the bulk data. A log
+    # without curve values has neither, which is not a reason to hold its record; a parent OSDU does not hold holds it.
+    DDMSDatasets:
+      $parent: data.DDMSDatasets
+      $required: false
+    ExtensionProperties:
+      wdms:
+        $parent: data.ExtensionProperties.wdms
+        $required: false

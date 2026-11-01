@@ -1,0 +1,73 @@
+# Flow: sqlflow-logtype-03-delivery
+#
+# Delivers this estate's curated LogType base dataset to OSDU as reference-data--LogType records, directly through the
+# storage service (no bulk payload or child dataset is declared, so the route resolves to Storage: a plain
+# PUT /api/storage/v2/records). Reads the ingestion table sqlflow-logtype-02-ing loads, renders it with the mapping
+# beside it (../mappings/CuratedLogType@1.0.0.yaml) and delivers it.
+#
+# This mapping reads no cache (unlike the WellLog mapping, it resolves no reference and looks up no wellbore): a
+# LogType record is self-contained, so no cache flow is needed for this delivery to render. The estate's
+# osdu-reference-00-cache already captures every reference-data--LogType record (welldb/cache/osdu-reference-00-cache.yaml,
+# type LogType, kind "osdu:wks:reference-data--LogType:*"), so the records this flow delivers are picked up there on
+# its next refresh, with no change to that flow needed, and become available to any mapping that resolves a LogType
+# reference the way it already does.
+flowType: delivery
+name: sqlflow-logtype-03-delivery
+batch: sqlflow-logtype
+
+# Add a partition here once the flow's identity is a member of the owner group below there, and the legal tag exists.
+partitions:
+  - name: dev
+    keepLedger: true
+
+source:
+  connection: ${env:OSDU_DATA_DB}
+  record:
+    object: OsduData.silver.CuratedLogType
+    key: [id]
+    primaryKey: RecId
+  lastModified: commit_date
+  incremental:
+    overlapSeconds: 900
+  work: ../.work/sqlflow-logtype
+
+render:
+  mapping: CuratedLogType@1.0.0
+  parameters:
+    # dataPartition is not set here: the flow names its partitions (above), so the kind supplies it as the
+    # partition a run targets, written literally; the mapping must not also read it from an env var.
+    # Distinct from OSDU_ACL_OWNER/OSDU_ACL_VIEWER, the groups the well log flows deliver under: a reference value is
+    # owned and read under a group of its own.
+    aclOwner: ${env:OSDU_LOGTYPE_ACL_OWNER}
+    aclViewer: ${env:OSDU_LOGTYPE_ACL_VIEWER}
+    legalTag: ${env:OSDU_LEGAL_TAG}
+
+change:
+  detect: renderedHash
+  onUnchanged: skip
+
+target:
+  endpoint: ${env:OSDU_URL}
+  auth:
+    type: oauth2ClientCredentials
+    secondarySecretRef: ${env:OSDU_CLIENT_ID}
+    secretRef: ${env:OSDU_CLIENT_SECRET}
+    token:
+      url: ${env:OSDU_TOKEN_URL}
+      body:
+        scope: ${env:OSDU_SCOPE}
+  protocol: storage
+
+reliability:
+  retry: { attempts: 4, backoff: exponential, baseDelayMs: 500, maxDelayMs: 30000 }
+  skipStatusCodes: [409]
+  timeoutSeconds: 100
+  leaseSeconds: 300
+
+parallelism:
+  recordsAtOnce: 4
+
+schedule: sqlflow-logtype
+
+verify:
+  reconcile: false

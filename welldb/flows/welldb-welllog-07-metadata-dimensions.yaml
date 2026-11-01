@@ -1,0 +1,298 @@
+# Flow: welldb-welllog-07-metadata-dimensions
+#
+# The well log metadata as connected tables built straight from OSDU search: the logs this estate delivered, each with
+# its curves, the wellbore and well it belongs to, and the reference data its references name.
+#
+# Tables (each osdu.dim_<dimension>):
+#
+#   dim_WelldbLogHeader   a row per log: its header (version, source, run, sampling start/stop/interval, log source,
+#                         reference curve), its vertical reference, and each reference as the id of its record
+#   dim_WelldbLogCurve    a row per curve of each log, numbered in the order the log holds them, with the log's ACL
+#   dim_WelldbWellboreRecord, dim_WelldbWellRecord   a row per wellbore and well the estate delivered
+#   dim_WelldbRef...      the reference data the *ID columns name, every record of the kind, keyed by its id
+#
+# View (osdu.v_dim_WelldbWellLogCurve, written by each build after the tables): the one wide table, a row per curve of
+# each log beside its log's header and ACL, its units, families and type, and its wellbore and well, the numbers typed;
+# what welldb-welllog-08-curve-table-ing copies into OsduData.silver.dim_WellLogCurveMetadata under a columnstore index for
+# analytical queries.
+#
+# Join keys. A column declared `keep: key` holds a reference exactly as the record holds it, the text a dimension keyed
+# by the same path holds. A column declared `keep: id` holds the id of the record a reference names, the text a dimension
+# keyed by `id` holds. Every table has `partition`.
+#
+#   -- The curve table of one log, its reference curve marked, each unit's name from the reference data.
+#   SELECT c.Mnemonic, CASE WHEN c.Mnemonic = l.ReferenceCurveID THEN 1 ELSE 0 END AS IsReferenceCurve,
+#          c.CurveVersion, c.CurveUnit, u.Name AS UnitName
+#   FROM osdu.dim_WelldbLogCurve AS c
+#   JOIN osdu.dim_WelldbLogHeader AS l ON l.partition = c.partition AND l.WellLogID = c.WellLogID
+#   LEFT JOIN osdu.dim_WelldbRefUnitOfMeasure AS u ON u.partition = c.partition AND u.UnitID = c.CurveUnitID
+#   WHERE c.WellLogID = '...' ORDER BY c.element;
+#
+# Build it with the Build button on the Dimensions page, or: sqlflow run welldb-welllog-07-metadata-dimensions.yaml
+# A build only reads from OSDU (aggregations, counts and records by id) and writes nothing there.
+flowType: dimension
+name: welldb-welllog-07-metadata-dimensions
+description: The well log metadata as connected tables over the delivered well logs, a log and its curves joined to their wellbores, wells and the reference data they name.
+batch: welldb
+partitions: [dev]
+
+parameters:
+  deliveredBy:
+    default: osdu-delivery
+    description: The DeliveredBy tag of the records to read, the one the sample's mappings write.
+
+source:
+  # The platform and credentials the delivery flow delivers with.
+  endpoint: ${env:OSDU_URL}
+  auth:
+    type: oauth2ClientCredentials
+    secondarySecretRef: ${env:OSDU_CLIENT_ID}
+    secretRef: ${env:OSDU_CLIENT_SECRET}
+    token:
+      url: ${env:OSDU_TOKEN_URL}
+      body:
+        scope: ${env:OSDU_SCOPE}
+
+parallelism:
+  recordsAtOnce: 4
+
+# Loads incrementally: the first build reads every key, and each later one only what changed since the last build read
+# the dimensions, by when each record last changed (modifyTime, or createTime for a record never modified). A key no log
+# holds any more is removed when it is read again; the keys only deleted logs held go with the next full load, once a
+# week (fullLoadAfterHours), or when a run asks for one (fullLoad).
+incremental:
+  keyColumns: [id]
+  fullLoadAfterHours: 168
+
+dimensions:
+  # A row per log. None of these dimensions declares `unlabelled` for an attribute: what a record does not hold stays NULL.
+  - name: WelldbLogHeader
+    description: Every delivered well log with its header and vertical reference, a row each.
+    kind: osdu:wks:work-product-component--WellLog:1.4.0
+    query: 'tags.DeliveredBy:"{deliveredBy}"'
+    path: id
+    label: data.Name
+    columns: { key: WellLogID, value: WellLogName }
+    unlabelled: Not specified
+    attributes:
+      Name: data.Name
+      WellboreID: { path: data.WellboreID, keep: id }
+      LogVersion: data.LogVersion
+      Source: data.Source
+      LogRun: data.LogRun
+      LogSource: data.LogSource
+      SamplingStart: data.SamplingStart
+      SamplingStop: data.SamplingStop
+      SamplingInterval: data.SamplingInterval
+      ReferenceCurveID: data.ReferenceCurveID
+      VerticalMeasurement: data.VerticalMeasurement.VerticalMeasurement
+      WellLogTypeID: { path: data.WellLogTypeID, keep: id }
+      SamplingDomainTypeID: { path: data.SamplingDomainTypeID, keep: id }
+      VerticalMeasurementTypeID: { path: data.VerticalMeasurement.VerticalMeasurementTypeID, keep: id }
+      VerticalMeasurementUnitID: { path: data.VerticalMeasurement.VerticalMeasurementUnitOfMeasureID, keep: id }
+
+  # The curve table: a row per curve of each log, every field of one curve on one row.
+  - name: WelldbLogCurve
+    description: Every curve of the delivered well logs, a row each, numbered in the order the log holds them.
+    kind: osdu:wks:work-product-component--WellLog:1.4.0
+    query: 'tags.DeliveredBy:"{deliveredBy}"'
+    path: id
+    label: data.Name
+    columns: { key: WellLogID, value: WellLogName }
+    unlabelled: Not specified
+    elements:
+      path: data.Curves
+      fields:
+        CurveID: CurveID
+        Mnemonic: Mnemonic
+        CurveDescription: CurveDescription
+        CurveVersion: CurveVersion
+        # Each unit as the code a person reads (m, gAPI, ohm.m) and as the id dim_WelldbRefUnitOfMeasure is keyed by.
+        CurveUnit: CurveUnit
+        CurveUnitID: { path: CurveUnit, keep: id }
+        DepthUnit: DepthUnit
+        DepthUnitID: { path: DepthUnit, keep: id }
+        TopDepth: TopDepth
+        BaseDepth: BaseDepth
+        LogCurveFamilyID: { path: LogCurveFamilyID, keep: id }
+        LogCurveMainFamilyID: { path: LogCurveMainFamilyID, keep: id }
+        LogCurveTypeID: { path: LogCurveTypeID, keep: id }
+        # The log's ACL on every curve's row, read from the record two objects up the path; the wide view writes it as JSON.
+        Owners: { path: acl.owners, up: 2, many: join }
+        Viewers: { path: acl.viewers, up: 2, many: join }
+
+  - name: WelldbWellboreRecord
+    description: Every wellbore the estate delivered (Wellbore 1.3.0), a row each.
+    kind: osdu:wks:master-data--Wellbore:1.3.0
+    query: 'tags.DeliveredBy:"{deliveredBy}"'
+    path: id
+    columns: { key: WellboreID, value: WellboreCode }
+    attributes:
+      WellID: { path: data.WellID, keep: id }
+      FacilityName: data.FacilityName
+
+  - name: WelldbWellRecord
+    description: Every well the estate delivered (Well 1.2.0), a row each.
+    kind: osdu:wks:master-data--Well:1.2.0
+    query: 'tags.DeliveredBy:"{deliveredBy}"'
+    path: id
+    columns: { key: WellID, value: WellCode }
+    attributes:
+      FacilityName: data.FacilityName
+
+  # The reference data the *ID columns name: every record of the kind, keyed by its id. Code and Name are read as
+  # attributes so a record that holds neither is NULL.
+  - name: WelldbRefUnitOfMeasure
+    description: Every unit of measure, joined from curve, depth and vertical measurement units.
+    kind: osdu:wks:reference-data--UnitOfMeasure:1.0.0
+    path: id
+    label: data.Code
+    columns: { key: UnitID, value: UnitCode }
+    attributes:
+      Code: data.Code
+      Name: data.Name
+
+  - name: WelldbRefLogCurveFamily
+    description: Every log curve family.
+    kind: osdu:wks:reference-data--LogCurveFamily:1.1.0
+    path: id
+    label: data.Code
+    columns: { key: LogCurveFamilyID, value: LogCurveFamilyCode }
+    attributes:
+      Code: data.Code
+      Name: data.Name
+
+  - name: WelldbRefLogCurveMainFamily
+    description: Every log curve main family.
+    kind: osdu:wks:reference-data--LogCurveMainFamily:1.0.0
+    path: id
+    label: data.Code
+    columns: { key: LogCurveMainFamilyID, value: LogCurveMainFamilyCode }
+    attributes:
+      Code: data.Code
+      Name: data.Name
+
+  - name: WelldbRefLogCurveType
+    description: Every log curve type.
+    kind: osdu:wks:reference-data--LogCurveType:1.1.0
+    path: id
+    label: data.Code
+    columns: { key: LogCurveTypeID, value: LogCurveTypeCode }
+    attributes:
+      Code: data.Code
+      Name: data.Name
+
+  - name: WelldbRefLogType
+    description: Every log type, joined from the logs' well log types.
+    kind: osdu:wks:reference-data--LogType:1.0.0
+    path: id
+    label: data.Code
+    columns: { key: LogTypeID, value: LogTypeCode }
+    attributes:
+      Code: data.Code
+      Name: data.Name
+
+  - name: WelldbRefSamplingDomainType
+    description: Every well log sampling domain type.
+    kind: osdu:wks:reference-data--WellLogSamplingDomainType:1.0.0
+    path: id
+    label: data.Name
+    columns: { key: SamplingDomainTypeID, value: SamplingDomainTypeName }
+    attributes:
+      Code: data.Code
+      Name: data.Name
+
+  - name: WelldbRefVerticalMeasurementType
+    description: Every vertical measurement type.
+    kind: osdu:wks:reference-data--VerticalMeasurementType:1.0.3
+    path: id
+    label: data.Name
+    columns: { key: VerticalMeasurementTypeID, value: VerticalMeasurementTypeName }
+    attributes:
+      Code: data.Code
+      Name: data.Name
+
+# The module's database, where the dimensions' tables and the view are, named as the flows reading its tables and views
+# name it: welldb-welllog-08-curve-table-ing reads osdu.v_dim_WelldbWellLogCurve through the same reference, so lineage
+# runs it after this flow. A build checks that the reference reaches the database it writes the tables in.
+target:
+  connection: ${env:SQLFLOW_CATALOG_DB}
+
+views:
+  # The one wide table, at the grain of one curve, for analytical queries: the curve, its log's header and ACL, and its
+  # wellbore and well. welldb-welllog-08-curve-table-ing loads it under a columnstore index.
+  - name: WelldbWellLogCurve
+    description: Every curve of the delivered well logs, a row each, with its log's header and ACL, its units, families and type, and its wellbore and well.
+    from: WelldbLogCurve
+    join:
+      - { on: WellLogID, to: WelldbLogHeader, as: Log }
+      - { on: Log.WellboreID, to: WelldbWellboreRecord, as: Wellbore }
+      - { on: Wellbore.WellID, to: WelldbWellRecord, as: Well }
+      - { on: CurveUnitID, to: WelldbRefUnitOfMeasure, as: CurveUnitOfMeasure }
+      - { on: DepthUnitID, to: WelldbRefUnitOfMeasure, as: DepthUnitOfMeasure }
+      - { on: LogCurveFamilyID, to: WelldbRefLogCurveFamily, as: Family }
+      - { on: LogCurveMainFamilyID, to: WelldbRefLogCurveMainFamily, as: MainFamily }
+      - { on: LogCurveTypeID, to: WelldbRefLogCurveType, as: CurveType }
+      - { on: Log.WellLogTypeID, to: WelldbRefLogType, as: LogType }
+      - { on: Log.SamplingDomainTypeID, to: WelldbRefSamplingDomainType, as: SamplingDomain }
+      - { on: Log.VerticalMeasurementTypeID, to: WelldbRefVerticalMeasurementType, as: VerticalMeasurementType }
+      - { on: Log.VerticalMeasurementUnitID, to: WelldbRefUnitOfMeasure, as: VerticalMeasurementUnitOfMeasure }
+    columns:
+      # The log.
+      WellLogID: WellLogID
+      WellLogName: Log.Name
+      WellboreID: Log.WellboreID
+      WellboreName: Wellbore.FacilityName
+      Source: Log.Source
+      LogVersion: Log.LogVersion
+      LogRun: Log.LogRun
+      LogSource: Log.LogSource
+      WellLogType: LogType.Name
+      WellLogTypeCode: LogType.Code
+      SamplingDomainType: SamplingDomain.Name
+      SamplingDomainTypeCode: SamplingDomain.Code
+      SamplingStart: { expression: Log.SamplingStart, dataType: float }
+      SamplingStop: { expression: Log.SamplingStop, dataType: float }
+      SamplingInterval: { expression: Log.SamplingInterval, dataType: float }
+      ReferenceCurveID: Log.ReferenceCurveID
+      VerticalMeasurement: { expression: Log.VerticalMeasurement, dataType: float }
+      VerticalMeasurementType: VerticalMeasurementType.Name
+      VerticalMeasurementTypeCode: VerticalMeasurementType.Code
+      VerticalMeasurementUnit: VerticalMeasurementUnitOfMeasure.Name
+      VerticalMeasurementUnitCode: VerticalMeasurementUnitOfMeasure.Code
+      Acls:
+        expression: |-
+          IIF(Owners IS NULL AND Viewers IS NULL, NULL, CONCAT(
+            '{',
+            IIF(Owners IS NULL, '', CONCAT('"owners":["', REPLACE(Owners, '; ', '","'), '"]')),
+            IIF(Owners IS NULL OR Viewers IS NULL, '', ','),
+            IIF(Viewers IS NULL, '', CONCAT('"viewers":["', REPLACE(Viewers, '; ', '","'), '"]')),
+            '}'))
+        dataType: nvarchar(max)
+      # The well the wellbore belongs to.
+      WellID: Wellbore.WellID
+      WellName: Well.FacilityName
+      # The curve, numbered in the order the log holds its curves.
+      CurveNumber: element
+      CurveID: CurveID
+      Mnemonic: Mnemonic
+      IsReferenceCurve: { expression: "IIF(Mnemonic = Log.ReferenceCurveID, 1, 0)", dataType: bit }
+      CurveDescription: CurveDescription
+      CurveVersion: CurveVersion
+      CurveUnit: CurveUnit
+      CurveUnitCode: CurveUnitOfMeasure.Code
+      CurveUnitName: CurveUnitOfMeasure.Name
+      DepthUnit: DepthUnit
+      DepthUnitCode: DepthUnitOfMeasure.Code
+      DepthUnitName: DepthUnitOfMeasure.Name
+      TopDepth: { expression: TopDepth, dataType: float }
+      BaseDepth: { expression: BaseDepth, dataType: float }
+      LogCurveFamily: Family.Name
+      LogCurveFamilyCode: Family.Code
+      LogCurveMainFamily: MainFamily.Name
+      LogCurveMainFamilyCode: MainFamily.Code
+      LogCurveType: CurveType.Name
+      LogCurveTypeCode: CurveType.Code
+
+# After the logs (../schedules.yaml), with welldb-welllog-05-dimensions.
+schedule: welldb-dimensions

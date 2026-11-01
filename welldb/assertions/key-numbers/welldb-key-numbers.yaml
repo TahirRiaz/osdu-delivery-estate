@@ -1,0 +1,68 @@
+# Flow: welldb-welllog-assertion-key-numbers
+#
+# Counts of the well logs per project, from the estate's own source files, held to what OSDU holds: the distinct
+# wellbores of the logs, their curves and their distinct curve mnemonics, read from the search index. The source files
+# count the index curve MD as a curve of every log, so the curve counts leave it out (except: [MD]).
+#
+# A count that changes as the source does takes asOf and validFor: past that the test is not judged and is flagged as
+# needing new proof values. warnWithin: 10% makes a count within 10% of what is stated a warning rather than a failure,
+# and atLeast in place of equals holds a count that only grows. This estate's counts are exact, so none of them is set.
+#
+# Written by gen_assertions.py from the source files. It joins the schedule welldb-welllog-assertions (../../schedules.yaml), which
+# runs every flow of assertions once a day.
+flowType: assertion
+name: welldb-welllog-assertion-key-numbers
+description: Counts of the well logs per project from the source files, held to what OSDU holds.
+batch: welldb
+
+# The partition the delivery flows deliver to.
+partitions: [dev]
+
+schedule: welldb-welllog-assertions
+
+source:
+  # The platform and credentials the delivery flows deliver with.
+  endpoint: ${env:OSDU_URL}
+  auth:
+    type: oauth2ClientCredentials
+    secondarySecretRef: ${env:OSDU_CLIENT_ID}
+    secretRef: ${env:OSDU_CLIENT_SECRET}
+    token:
+      url: ${env:OSDU_TOKEN_URL}
+      body:
+        scope: ${env:OSDU_SCOPE}
+
+reliability:
+  retry: { attempts: 4, backoff: exponential, baseDelayMs: 500, maxDelayMs: 30000 }
+  timeoutSeconds: 100
+
+parallelism:
+  recordsAtOnce: 4
+
+defaults:
+  read: index
+  maxRecords: 1000
+
+failRunOn: error
+
+tests:
+  - name: project-a
+    description: "The COMPOSITE logs of project PROJECT_A."
+    tags: [key-numbers, project-a]
+    kind: osdu:wks:work-product-component--WellLog:1.4.0
+    query: 'tags.SourceProject:"PROJECT_A" AND data.Name.keyword:"COMPOSITE"'
+    assert:
+      - name: 5 wellbore(s)
+        aggregate: distinct
+        field: data.WellboreID
+        equals: 5
+      - name: 21 curve(s), the index curve MD aside
+        aggregate: count
+        field: data.Curves.CurveID
+        except: [MD]
+        equals: 21
+      - name: 10 distinct curve mnemonic(s), the index curve MD aside
+        aggregate: distinct
+        field: data.Curves.CurveID
+        except: [MD]
+        equals: 10

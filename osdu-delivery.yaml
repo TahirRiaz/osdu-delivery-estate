@@ -1,0 +1,7 @@
+# The repository document: the code every run of this repository's flows carries in the correlation-id of its OSDU
+# requests (osdu-delivery-welldb-<operation>-<run id>), so a run, or every run of the estate, is found in the platform's
+# logs by the value or a prefix of it. It changes nothing a flow reads, writes or delivers
+# (osdu/docs/reference/flow/repository.md in OSDU Delivery).
+documentType: repository
+code: welldb
+description: The WellDB sample estate, its wells, wellbores, well logs and log types.

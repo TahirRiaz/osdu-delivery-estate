@@ -1,0 +1,7 @@
+# The schedule of the sqlflow-logtype pipeline: lands and keys the curated base dataset, then delivers what changed to
+# OSDU as reference-data--LogType records. "Run now" on the Schedules page (POST /api/v1/schedules/{id}/run) runs the
+# whole chain on demand; a single flow still runs on its own from the Pipelines page or with `sqlflow run <flow>`.
+schedules:
+  sqlflow-logtype:
+    cron: "0 2 * * *"
+    timezone: UTC

@@ -1,0 +1,32 @@
+# Ingestion: the typed pre view into the keyed ingestion table the delivery flow reads.
+#
+# One row per LogType value (keyed by id), with SQLFlow's own system columns saying when the row last changed and
+# which file it came from, so the delivery windows on commit_date and traces every delivered record back to
+# FileName_DW and RowNumber_DW.
+flowType: ing
+name: sqlflow-logtype-02-ing
+batch: sqlflow-logtype
+
+connections:
+  osduData: ${env:OSDU_DATA_DB}
+
+source:
+  server: osduData
+  object: OsduData.pre.v_CuratedLogType
+
+target:
+  server: osduData
+  object: OsduData.silver.CuratedLogType
+  identityColumn: RecId
+
+load:
+  keyColumns: [id]
+
+systemColumns:
+  insertedDate: true
+  updatedDate: true
+
+incremental:
+  columns: [FileDate_DW]
+
+schedule: sqlflow-logtype

@@ -1,0 +1,133 @@
+# Flow: welldb-welllog-assertion-wellbore-c-1
+#
+# Proof values of wellbore Wellbore C-1: what OSDU has to hold for its logs, from the estate's own source files
+# (welllog_20260924.csv, row 6, and the rows of curves_20260924.csv each test names).
+#
+# Each test is one of its logs, by project and log name; each row of a test is one curve of that log, and says which
+# row of the curve file it is. A row finds its record by full paths (locateBy): the log is the WellLog whose
+# data.WellboreID names the wellbore of that name ('[data.WellboreID, data.FacilityName]', read through the reference as
+# a dimension label is), of that project (tags.SourceProject) and log name (data.Name), and the curve is the item of
+# data.Curves with that mnemonic. Its proof values (check) are full paths into the record WellLog@1.4.0 renders, each
+# with the value that record holds; every proof value of a curve is read from that one curve. Units, log types,
+# sampling domains, business values and curve families are the references WellLog@1.4.0 writes for the source's words
+# (the unit US/F is {partition}:reference-data--UnitOfMeasure:us%2Fft:). A depth is compared within half a millimetre.
+#
+# A row whose log or curve OSDU does not hold fails the test, saying by which path it was not found. A test, an assertion,
+# a row or a proof value takes disabled: <why> to stay in the flow, reported as skipped, without failing the run. A test
+# that says when its proof values were stated (asOf) and how long they hold (validFor: 180d) is flagged past that, a
+# warning that it needs new proof values, rather than judged.
+#
+# Written by gen_assertions.py from the source files. It joins the schedule welldb-welllog-assertions (../../schedules.yaml),
+# which runs every flow of assertions once a day. The flow, or one of its assertions, also runs on its own from the
+# Assertions page, or
+#   sqlflow run welldb-welllog-assertion-wellbore-c-1.yaml
+flowType: assertion
+name: welldb-welllog-assertion-wellbore-c-1
+description: "Proof values of wellbore Wellbore C-1 from the source files, held to what OSDU holds of its logs."
+batch: welldb
+
+# The partition the delivery flows deliver to.
+partitions: [dev]
+
+schedule: welldb-welllog-assertions
+
+source:
+  # The platform and credentials the delivery flows deliver with.
+  endpoint: ${env:OSDU_URL}
+  auth:
+    type: oauth2ClientCredentials
+    secondarySecretRef: ${env:OSDU_CLIENT_ID}
+    secretRef: ${env:OSDU_CLIENT_SECRET}
+    token:
+      url: ${env:OSDU_TOKEN_URL}
+      body:
+        scope: ${env:OSDU_SCOPE}
+
+reliability:
+  retry: { attempts: 4, backoff: exponential, baseDelayMs: 500, maxDelayMs: 30000 }
+  timeoutSeconds: 100
+
+parallelism:
+  recordsAtOnce: 4
+
+defaults:
+  examples: 100
+  read: storage
+
+# A failed or errored test fails the run, so a schedule's notifications would say so.
+failRunOn: error
+
+tests:
+  - name: composite
+    description: "The COMPOSITE log of Wellbore C-1 in project PROJECT_A: log LOG-0005/1, rows 25 to 27 of the curve file."
+    tags: [welldb, composite]
+    kind: osdu:wks:work-product-component--WellLog:1.4.0
+    assert:
+      - name: the COMPOSITE log of Wellbore C-1
+        knownValues:
+          locateBy:
+            '[data.WellboreID, data.FacilityName]': "Wellbore C-1"
+            tags.SourceProject: PROJECT_A
+            data.Name: COMPOSITE
+          check:
+            data.VerticalMeasurement.VerticalMeasurement: 41.2
+            data.VerticalMeasurement.VerticalMeasurementUnitOfMeasureID: "{partition}:reference-data--UnitOfMeasure:m:"
+            data.VerticalMeasurement.VerticalMeasurementTypeID: "{partition}:reference-data--VerticalMeasurementType:KellyBushing:"
+            data.SamplingStart: { equals: 1660.5504, tolerance: 0.0005 }
+            data.SamplingStop: { equals: 1680.972, tolerance: 0.0005 }
+            data.SamplingInterval: 0.1524
+            data.ReferenceCurveID: MD
+            data.WellLogTypeID: "{partition}:reference-data--LogType:Interpreted:"
+            data.SamplingDomainTypeID: "{partition}:reference-data--WellLogSamplingDomainType:Depth:"
+            data.LogRun: C
+            data.LogSource: WELLDB
+            data.Source: WELLDB
+            data.ActivityType: HYBRID
+            data.LogActivity: C
+            data.IsRegular: true
+      - name: the curves of the COMPOSITE log of Wellbore C-1
+        knownValues:
+          locateBy:
+            '[data.WellboreID, data.FacilityName]': "Wellbore C-1"
+            tags.SourceProject: PROJECT_A
+            data.Name: COMPOSITE
+          rows:
+            # Row 25 of curves_20260924.csv.
+            - locateBy:
+                data.Curves.CurveID: MD
+              check:
+                data.Curves.CurveUnit: "{partition}:reference-data--UnitOfMeasure:m:"
+                data.Curves.DepthUnit: "{partition}:reference-data--UnitOfMeasure:m:"
+                data.Curves.TopDepth: { equals: 1660.5504, tolerance: 0.0005 }
+                data.Curves.BaseDepth: { equals: 1680.972, tolerance: 0.0005 }
+                data.Curves.CurveDescription: "Measured depth"
+                data.Curves.LogCurveBusinessValueID: "{partition}:reference-data--LogCurveBusinessValue:High:"
+                data.Curves.LogCurveTypeID: "{partition}:reference-data--LogCurveType:WellDB:MD:"
+                data.Curves.LogCurveMainFamilyID: "{partition}:reference-data--LogCurveMainFamily:Reference:"
+                data.Curves.LogCurveFamilyID: "{partition}:reference-data--LogCurveFamily:Measured%20Depth:"
+            # Row 26 of curves_20260924.csv.
+            - locateBy:
+                data.Curves.CurveID: GR
+              check:
+                data.Curves.CurveUnit: "{partition}:reference-data--UnitOfMeasure:gAPI:"
+                data.Curves.DepthUnit: "{partition}:reference-data--UnitOfMeasure:m:"
+                data.Curves.TopDepth: { equals: 1660.5504, tolerance: 0.0005 }
+                data.Curves.BaseDepth: { equals: 1680.972, tolerance: 0.0005 }
+                data.Curves.CurveDescription: "Gamma Ray"
+                data.Curves.LogCurveBusinessValueID: "{partition}:reference-data--LogCurveBusinessValue:High:"
+                data.Curves.LogCurveTypeID: "{partition}:reference-data--LogCurveType:WellDB:GR:"
+                data.Curves.LogCurveMainFamilyID: "{partition}:reference-data--LogCurveMainFamily:GammaRay:"
+                data.Curves.LogCurveFamilyID: "{partition}:reference-data--LogCurveFamily:Gamma%20Ray:"
+            # Row 27 of curves_20260924.csv.
+            - locateBy:
+                data.Curves.CurveID: RD
+              check:
+                data.Curves.CurveUnit: "{partition}:reference-data--UnitOfMeasure:ohm.m:"
+                data.Curves.DepthUnit: "{partition}:reference-data--UnitOfMeasure:m:"
+                data.Curves.TopDepth: { equals: 1661.16, tolerance: 0.0005 }
+                data.Curves.BaseDepth: { equals: 1680.0576, tolerance: 0.0005 }
+                data.Curves.CurveDescription: "Deep resistivity"
+                data.Curves.LogCurveBusinessValueID: "{partition}:reference-data--LogCurveBusinessValue:High:"
+                data.Curves.LogCurveTypeID: "{partition}:reference-data--LogCurveType:WellDB:RD:"
+                data.Curves.LogCurveMainFamilyID: "{partition}:reference-data--LogCurveMainFamily:Resistivity:"
+                data.Curves.LogCurveFamilyID: "{partition}:reference-data--LogCurveFamily:Resistivity%20-%20Deep:"

@@ -1,0 +1,63 @@
+# Mapping: this estate's curated LogType base dataset into the reference-data--LogType template (osdu/docs/reference/flow/mapping.md).
+#
+# One record per LogType value this pipeline governs through SQLFlow instead of a record typed by hand into the
+# platform: ../data/logtype/logtype_seed.csv is the one curated, versioned source. Every Code and ID this mapping
+# writes carries the sqlflow- prefix, so it is never confused with the platform's own standard values (Interpreted,
+# Composite, Raw, Edited, Corrected), and is found among the partition's LogType records by that prefix alone.
+#
+# The name is the estate's own: welldb/mappings/LogType@1.0.0.yaml delivers OSDU's published values of the same kind.
+documentType: mapping
+name: CuratedLogType
+version: 1.0.0
+template:
+  kind: osdu:wks:reference-data--LogType:1.0.0
+  version: 643f542b69519f32
+description: This estate's curated LogType base dataset (one record per log type it governs), delivered through the OSDU storage service.
+
+dataset:
+  system: sqlflow-logtype
+  key: [id]
+  label: "{name} ({code})"
+  identity: [id, code]
+
+parameters:
+  dataPartition:
+    required: true
+    description: The OSDU data partition record ids and references are minted in.
+  aclOwner:
+    required: true
+    description: The entitlements group that owns every record this mapping renders (acl.owners).
+  aclViewer:
+    required: true
+    description: The entitlements group that may read every record this mapping renders (acl.viewers).
+  legalTag:
+    required: true
+    description: The legal tag every record this mapping renders carries (legal.legaltags).
+
+record:
+  acl:
+    owners: ["{$param.aclOwner}"]
+    viewers: ["{$param.aclViewer}"]
+  # OSDU adds legal.status (compliant/incompliant) itself once it checks the tag; the mapping never sets it.
+  legal:
+    legaltags: ["{$param.legalTag}"]
+    otherRelevantDataCountries: [US]
+  tags:
+    DeliveredBy: osdu-delivery
+    Tag1: { $from: Tag1 }
+    Tag2: { $from: Tag2 }
+    Tag3: { $from: Tag3 }
+    Tag4: { $from: Tag4 }
+
+  data:
+    ID: { $from: id }
+    Code: { $from: code }
+    Name: { $from: name }
+    Description: { $from: description }
+    Source: { $from: source_note }
+    AttributionAuthority: { $from: authority }
+    AttributionPublication: { $from: publication }
+    AttributionRevision: { $from: revision }
+    CommitDate:
+      $from: commit_date
+      $modifiers: [date]
